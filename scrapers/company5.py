@@ -27,6 +27,15 @@ def setup_driver(headless: bool = True):
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--window-size=1400,900")
+    
+    # GitHub Actions ortamında chromium binary path'ini ayarla
+    chrome_bin = os.environ.get("CHROME_BIN")
+    if chrome_bin:
+        options.binary_location = chrome_bin
+    elif os.path.exists("/usr/bin/chromium-browser"):
+        options.binary_location = "/usr/bin/chromium-browser"
+    elif os.path.exists("/usr/bin/chromium"):
+        options.binary_location = "/usr/bin/chromium"
 
     prefs = {
         "profile.managed_default_content_settings.images": 2,
@@ -79,14 +88,14 @@ def pick_email(driver):
 
     # 2) fallback: find any email-like text on page
     text = driver.page_source
-    m = re.search(r"[\\w\\.-]+@[\\w\\.-]+\\.\\w+", text)
+    m = re.search(r"[\w\.-]+@[\w\.-]+\.\w+", text)
     return m.group(0) if m else None
 
 
 def normalize_tr_phone(raw: str) -> str:
     if not raw:
         return ""
-    digits = re.sub(r"\\D+", "", raw.strip())
+    digits = re.sub(r"\D+", "", raw.strip())
 
     # drop country code 90...
     if digits.startswith("90") and len(digits) >= 12:
@@ -117,7 +126,7 @@ def extract_phones_from_text(text: str):
 
     # phone-like chunks (keep it permissive)
     candidates = re.findall(
-        r'(\\+?90\\s*)?\\(?0?\\d{3}\\)?[\\s\\-]?\\d{3}[\\s\\-]?\\d{2}[\\s\\-]?\\d{2}|\\b0\\d{10}\\b|\\b5\\d{9}\\b',
+        r'(\+?90\s*)?\(?0?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}|\b0\d{10}\b|\b5\d{9}\b',
         text,
     )
     # re.findall returns tuples when groups exist; normalize:
@@ -128,7 +137,7 @@ def extract_phones_from_text(text: str):
         flat.append(c)
 
     # also catch fully contiguous digits in the text
-    digit_runs = re.findall(r"\\d{10,13}", re.sub(r"\\s+", "", text))
+    digit_runs = re.findall(r"\d{10,13}", re.sub(r"\s+", "", text))
     flat.extend(digit_runs)
 
     phones = []
