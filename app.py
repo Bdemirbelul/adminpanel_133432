@@ -43,45 +43,39 @@ def log(msg: str):
 
 class TeeOutput:
     """Hem terminale hem de log'a yazan output wrapper"""
+
     def __init__(self, original_stream):
         self.original_stream = original_stream
         self.buffer = ""
         self.log_container = None
-        
+
     def set_log_container(self, container):
         """Log container'ı set et (gerçek zamanlı güncelleme için)"""
         self.log_container = container
-        
+
     def write(self, text):
         if not text:
             return
-            
-        # Buffer'a ekle (çok satırlı çıktılar için)
+
         self.buffer += text
-        
-        # Eğer yeni satır karakteri varsa, satırları işle
-        if '\n' in self.buffer:
-            lines = self.buffer.split('\n')
-            # Son satır hariç hepsini log'a ekle (son satır henüz tamamlanmamış olabilir)
+
+        if "\n" in self.buffer:
+            lines = self.buffer.split("\n")
             for line in lines[:-1]:
-                if line.strip():  # Boş satırları atla
+                if line.strip():
                     log(line)
-            # Kalan kısmı buffer'da tut
             self.buffer = lines[-1]
-        # Eğer buffer çok uzunsa (yeni satır olmadan), zorla log'a ekle
         elif len(self.buffer) > 500:
             log(self.buffer.rstrip())
             self.buffer = ""
-        
-        # Orijinal stream'e yaz
+
         try:
             self.original_stream.write(text)
             self.original_stream.flush()
         except Exception:
-            pass  # Stream kapatılmış olabilir
-        
+            pass
+
     def flush(self):
-        # Buffer'da kalan varsa onu da log'a ekle
         if self.buffer.strip():
             log(self.buffer.strip())
             self.buffer = ""
@@ -89,7 +83,7 @@ class TeeOutput:
             self.original_stream.flush()
         except Exception:
             pass
-        
+
     def __getattr__(self, name):
         return getattr(self.original_stream, name)
 
@@ -100,18 +94,14 @@ def capture_output(log_container=None):
     original_stdout = sys.stdout
     original_stderr = sys.stderr
     original_print = builtins.print
-    
-    # Print fonksiyonunu override et
+
     def _print(*args, **kwargs):
-        # Her zaman log'a yaz (file parametresine bakmadan)
         msg = " ".join(str(a) for a in args)
-        if msg.strip():  # Boş mesajları atla
+        if msg.strip():
             log(msg)
-        # Orijinal print'i çağır (file parametresini koruyarak)
         original_print(*args, **kwargs)
-    
+
     try:
-        # stdout ve stderr'i yakala
         tee_stdout = TeeOutput(original_stdout)
         tee_stderr = TeeOutput(original_stderr)
         if log_container is not None:
@@ -122,7 +112,6 @@ def capture_output(log_container=None):
         builtins.print = _print
         yield
     finally:
-        # Her durumda eski haline getir
         sys.stdout = original_stdout
         sys.stderr = original_stderr
         builtins.print = original_print
@@ -131,93 +120,139 @@ def capture_output(log_container=None):
 def run_one(name, fn, out_dir, log_container=None):
     start = time.time()
     log(f"🚀 {name} çalışmaya başladı...")
-    
-    # Log container'ı güncelle
+
     if log_container is not None:
         log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
         log_container.code(log_text, language="", line_numbers=False)
-    
-    log(f"⏳ Lütfen bekleyin, veri çekiliyor...")
+
+    log("⏳ Lütfen bekleyin, veri çekiliyor...")
     if log_container is not None:
         log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
         log_container.code(log_text, language="", line_numbers=False)
-    
+
     with capture_output(log_container):
         try:
-            result = fn(out_dir)  # scraper'ın run() fonksiyonu
+            result = fn(out_dir)
             elapsed = time.time() - start
-            
-            # İlerleme mesajları
+
             if elapsed > 10:
-                log(f"⏳ Bitmeye yakın, veriler işleniyor...")
+                log("⏳ Bitmeye yakın, veriler işleniyor...")
                 if log_container is not None:
                     log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
                     log_container.code(log_text, language="", line_numbers=False)
-            
-            log(f"✅ Veriler alındı, dosyalanıyor...")
+
+            log("✅ Veriler alındı, dosyalanıyor...")
             if log_container is not None:
                 log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
                 log_container.code(log_text, language="", line_numbers=False)
-            
+
             log(f"✓ {name} tamamlandı ({elapsed:.1f}s). {result}")
-            
-            # Log container'ı güncelle
+
             if log_container is not None:
                 log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
                 log_container.code(log_text, language="", line_numbers=False)
-            
+
             return True
         except Exception:
             elapsed = time.time() - start
             log(f"❌ {name} hata oluştu ({elapsed:.1f}s):\n{traceback.format_exc()}")
-            
-            # Log container'ı güncelle
+
             if log_container is not None:
                 log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
                 log_container.code(log_text, language="", line_numbers=False)
-            
+
             return False
 
 
 if "logs" not in st.session_state:
     st.session_state.logs = []
 
-# Tab başlıklarını büyük yapmak için CSS ve gri butonlar için CSS
-st.markdown("""
+# Tab başlıklarını büyüt + Remax/Turyap/Dialog butonlarını gri yap (sağlam yöntem: JS class ekleme)
+st.markdown(
+    """
 <style>
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        padding: 10px 20px;
-        font-size: 20px;
-        font-weight: bold;
-    }
-    /* Remax, Dialog ve Turyap butonlarını gri yap ve isimlerini kırmızı yap */
-    button[data-testid*="btn_Remax"],
-    button[data-testid*="btn_Dialog"],
-    button[data-testid*="btn_Turyap"] {
-        background-color: #808080 !important;
-        color: #ff0000 !important;
-        opacity: 0.8;
-    }
-    button[data-testid*="btn_Remax"]:hover,
-    button[data-testid*="btn_Dialog"]:hover,
-    button[data-testid*="btn_Turyap"]:hover {
-        background-color: #6a6a6a !important;
-        color: #ff0000 !important;
-        opacity: 0.9;
-    }
+  .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+  .stTabs [data-baseweb="tab"] {
+    height: 50px;
+    padding: 10px 20px;
+    font-size: 20px;
+    font-weight: bold;
+  }
+
+  /* Hedef butonlar - Remax, Dialog, Turyap */
+  button.gray-target,
+  div[data-testid*="btn_Remax"] button,
+  div[data-testid*="btn_Dialog"] button,
+  div[data-testid*="btn_Turyap"] button {
+    background-color: #808080 !important;
+    color: #ff0000 !important;
+    border: 1px solid #808080 !important;
+  }
+  button.gray-target:hover,
+  div[data-testid*="btn_Remax"] button:hover,
+  div[data-testid*="btn_Dialog"] button:hover,
+  div[data-testid*="btn_Turyap"] button:hover {
+    background-color: #6a6a6a !important;
+    color: #ff0000 !important;
+    border-color: #6a6a6a !important;
+  }
 </style>
-""", unsafe_allow_html=True)
+
+<script>
+(function() {
+  const TARGETS = ["Remax", "Turyap", "Dialog"];
+  
+  function styleButtons() {
+    // Streamlit buton container'larını bul
+    document.querySelectorAll('div[data-testid*="btn_Remax"], div[data-testid*="btn_Dialog"], div[data-testid*="btn_Turyap"]').forEach((container) => {
+      const btn = container.querySelector('button');
+      if (btn) {
+        btn.style.setProperty("background-color", "#808080", "important");
+        btn.style.setProperty("color", "#ff0000", "important");
+        btn.style.setProperty("border-color", "#808080", "important");
+        btn.classList.add("gray-target");
+      }
+    });
+    // Alternatif: Buton metnine göre bul
+    document.querySelectorAll("button").forEach((btn) => {
+      const text = (btn.textContent || btn.innerText || "").trim();
+      if (TARGETS.some(target => text.includes(target))) {
+        btn.style.setProperty("background-color", "#808080", "important");
+        btn.style.setProperty("color", "#ff0000", "important");
+        btn.style.setProperty("border-color", "#808080", "important");
+        btn.classList.add("gray-target");
+      }
+    });
+  }
+  
+  // Hemen çalıştır
+  styleButtons();
+  
+  // Kısa aralıklarla tekrar dene
+  setTimeout(styleButtons, 100);
+  setTimeout(styleButtons, 500);
+  setTimeout(styleButtons, 1000);
+  
+  // DOM değişikliklerini izle
+  const observer = new MutationObserver(() => {
+    styleButtons();
+  });
+  observer.observe(document.body, { 
+    childList: true, 
+    subtree: true,
+    attributes: false
+  });
+})();
+</script>
+""",
+    unsafe_allow_html=True,
+)
 
 tab_scraper, tab_diff, tab_view = st.tabs(
     ["Scraper Paneli", "CSV/Excel Karşılaştırma", "Çıktıları Görüntüle"]
 )
 
 with tab_scraper:
-    # Output klasörü (run bazlı)
     stamp = datetime.now().strftime("%Y-%m-%d")
     run_folder = stamp
     out_dir = os.path.join(OUTPUT_BASE, run_folder)
@@ -229,31 +264,51 @@ with tab_scraper:
         st.subheader("Sistemi Çalıştır")
 
         for name, fn in COMPANIES:
-            if st.button(f"▶️ {name}", key=f"btn_{name}"):
-                # Log'ları sıfırla
+            # Remax, Dialog ve Turyap butonlarını disabled yap
+            is_disabled = name in ["Remax", "Dialog", "Turyap"]
+            
+            if st.button(f"▶️ {name}", key=f"btn_{name}", disabled=is_disabled):
                 st.session_state.logs = []
-                
-                # Sağ taraftaki log container'ı kullan
+
                 with right:
                     st.subheader("Log")
                     log_container = st.empty()
                     log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs) if st.session_state.logs else ""
                     log_container.code(log_text, language="", line_numbers=False)
-                
+
                 run_one(name, fn, out_dir, log_container)
+            
+        # Remax, Dialog ve Turyap butonlarını gri yap ve tıklanamaz göster
+        st.markdown("""
+        <style>
+        div[data-testid*="btn_Remax"] button,
+        div[data-testid*="btn_Dialog"] button,
+        div[data-testid*="btn_Turyap"] button {
+            background-color: #808080 !important;
+            color: #ff0000 !important;
+            border-color: #808080 !important;
+            cursor: not-allowed !important;
+            opacity: 0.8 !important;
+        }
+        div[data-testid*="btn_Remax"] button:hover,
+        div[data-testid*="btn_Dialog"] button:hover,
+        div[data-testid*="btn_Turyap"] button:hover {
+            background-color: #808080 !important;
+            color: #ff0000 !important;
+            border-color: #808080 !important;
+            cursor: not-allowed !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
     with right:
         st.subheader("Log")
-        # Log container'ı oluştur
         log_container = st.empty()
-        
-        # Log'ları göster
         log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs) if st.session_state.logs else ""
         log_container.code(log_text, language="", line_numbers=False)
 
     st.divider()
 
-    # Çıktı dosyalarını listeler
     st.subheader("Üretilen Dosyalar")
 
     files = []
@@ -268,22 +323,20 @@ with tab_scraper:
             st.write("•", os.path.relpath(fpath, OUTPUT_BASE))
 
 with tab_diff:
-    # CSS for larger file uploader labels
-    st.markdown("""
+    st.markdown(
+        """
     <style>
         div[data-testid="stFileUploader"] label {
             font-size: 20px !important;
             font-weight: bold !important;
         }
     </style>
-    """, unsafe_allow_html=True)
+    """,
+        unsafe_allow_html=True,
+    )
 
-    file_a = st.file_uploader(
-        "Dosya A yükle (.csv / .xlsx)", type=["csv", "xlsx"], key="a"
-    )
-    file_b = st.file_uploader(
-        "Dosya B yükle (.csv / .xlsx)", type=["csv", "xlsx"], key="b"
-    )
+    file_a = st.file_uploader("Dosya A yükle (.csv / .xlsx)", type=["csv", "xlsx"], key="a")
+    file_b = st.file_uploader("Dosya B yükle (.csv / .xlsx)", type=["csv", "xlsx"], key="b")
 
     mode = st.radio(
         "Karşılaştırma modu",
@@ -299,24 +352,16 @@ with tab_diff:
         txt = raw.decode("utf-8", errors="replace")
         for sep in [";", ",", "\t", "|"]:
             try:
-                df = pd.read_csv(
-                    io.StringIO(txt), sep=sep, dtype=str, engine="python"
-                )
+                df = pd.read_csv(io.StringIO(txt), sep=sep, dtype=str, engine="python")
                 if df.shape[1] >= 2 or (df.shape[1] == 1 and len(df) > 0):
                     return df.dropna(how="all")
             except Exception:
                 continue
-        return (
-            pd.read_csv(io.StringIO(txt), dtype=str, engine="python").dropna(
-                how="all"
-            )
-        )
+        return pd.read_csv(io.StringIO(txt), dtype=str, engine="python").dropna(how="all")
 
     def read_excel(uploaded) -> pd.DataFrame:
         xls = pd.ExcelFile(uploaded)
-        sheet = st.selectbox(
-            f"Sheet seç ({uploaded.name})", xls.sheet_names, key=uploaded.name
-        )
+        sheet = st.selectbox(f"Sheet seç ({uploaded.name})", xls.sheet_names, key=uploaded.name)
         df = pd.read_excel(uploaded, sheet_name=sheet, dtype=str)
         return df.dropna(how="all")
 
@@ -346,15 +391,11 @@ with tab_diff:
         col1, col2 = st.columns(2)
         with col1:
             df_a = read_any(file_a)
-            st.caption(
-                f"A: {file_a.name} | satır: {len(df_a)} | kolon: {len(df_a.columns)}"
-            )
+            st.caption(f"A: {file_a.name} | satır: {len(df_a)} | kolon: {len(df_a.columns)}")
             st.dataframe(df_a.head(20), use_container_width=True)
         with col2:
             df_b = read_any(file_b)
-            st.caption(
-                f"B: {file_b.name} | satır: {len(df_b)} | kolon: {len(df_b.columns)}"
-            )
+            st.caption(f"B: {file_b.name} | satır: {len(df_b)} | kolon: {len(df_b.columns)}")
             st.dataframe(df_b.head(20), use_container_width=True)
 
         st.divider()
@@ -362,9 +403,7 @@ with tab_diff:
         if mode == "Tek kolon (değer listesi)":
             common_cols = sorted(set(df_a.columns) & set(df_b.columns))
             if not common_cols:
-                st.error(
-                    "İki dosyada ortak kolon yok. Kolon isimlerini eşitle veya 'Tam satır' modunu kullan."
-                )
+                st.error("İki dosyada ortak kolon yok. Kolon isimlerini eşitle veya 'Tam satır' modunu kullan.")
                 st.stop()
 
             key_col = st.selectbox("Karşılaştırılacak kolon", common_cols)
@@ -403,16 +442,8 @@ with tab_diff:
                 )
 
         else:
-            cols_a = st.multiselect(
-                "A: Hangi kolonlar dahil olsun? (boşsa hepsi)",
-                df_a.columns.tolist(),
-                default=[],
-            )
-            cols_b = st.multiselect(
-                "B: Hangi kolonlar dahil olsun? (boşsa hepsi)",
-                df_b.columns.tolist(),
-                default=[],
-            )
+            cols_a = st.multiselect("A: Hangi kolonlar dahil olsun? (boşsa hepsi)", df_a.columns.tolist(), default=[])
+            cols_b = st.multiselect("B: Hangi kolonlar dahil olsun? (boşsa hepsi)", df_b.columns.tolist(), default=[])
 
             use_a = df_a[cols_a] if cols_a else df_a
             use_b = df_b[cols_b] if cols_b else df_b
@@ -454,16 +485,10 @@ with tab_diff:
     else:
         st.info("Başlamak için iki dosyayı yükle (CSV veya Excel).")
 
-
 with tab_view:
     st.markdown("<h1 style='font-size: 32px; font-weight: bold;'>Çıktı Dosyalarını Görüntüle</h1>", unsafe_allow_html=True)
 
-    # OUTPUT_BASE altındaki run klasörlerini listele
-    run_dirs = [
-        d
-        for d in os.listdir(OUTPUT_BASE)
-        if os.path.isdir(os.path.join(OUTPUT_BASE, d))
-    ]
+    run_dirs = [d for d in os.listdir(OUTPUT_BASE) if os.path.isdir(os.path.join(OUTPUT_BASE, d))]
 
     if not run_dirs:
         st.info("Henüz oluşturulmuş çıktı klasörü yok.")
@@ -473,7 +498,6 @@ with tab_view:
 
         run_path = os.path.join(OUTPUT_BASE, selected_run)
 
-        # Seçilen run klasörü altındaki CSV/Excel dosyalarını bul
         data_files = []
         for root, _, filenames in os.walk(run_path):
             for f in filenames:
@@ -490,17 +514,14 @@ with tab_view:
             choice = st.selectbox("Dosya seç", labels)
 
             chosen_path = dict(data_files)[choice]
-
             st.caption(f"Seçilen dosya: `{chosen_path}`")
 
-            # Dosyayı oku
             try:
                 if chosen_path.lower().endswith(".csv"):
-                    # Farklı encoding'leri dene (Türkçe karakter desteği için)
                     encodings = ["utf-8-sig", "utf-8", "latin-1", "cp1254", "iso-8859-9"]
                     txt = None
                     used_encoding = None
-                    
+
                     for enc in encodings:
                         try:
                             with open(chosen_path, "r", encoding=enc, errors="replace") as f:
@@ -509,83 +530,55 @@ with tab_view:
                             break
                         except Exception:
                             continue
-                    
+
                     if txt is None:
                         st.error("Dosya okunamadı. Encoding sorunu olabilir.")
                         st.stop()
-                    
-                    # Ayracı otomatik anlamaya çalış
+
                     df_view = None
                     for sep in [";", ",", "\t", "|"]:
                         try:
                             test_df = pd.read_csv(
-                                io.StringIO(txt), 
-                                sep=sep, 
-                                dtype=str, 
+                                io.StringIO(txt),
+                                sep=sep,
+                                dtype=str,
                                 engine="python",
                                 quotechar='"',
-                                skipinitialspace=True
+                                skipinitialspace=True,
                             )
-                            # Eğer birden fazla kolon varsa veya tek kolon ama çok satır varsa geçerli
                             if test_df.shape[1] >= 2 or (test_df.shape[1] == 1 and len(test_df) > 0):
                                 df_view = test_df
                                 break
                         except Exception:
                             continue
-                    
+
                     if df_view is None:
-                        # Son çare: pandas'ın otomatik algılamasına bırak
-                        df_view = pd.read_csv(
-                            io.StringIO(txt), 
-                            dtype=str, 
-                            engine="python",
-                            quotechar='"'
-                        )
+                        df_view = pd.read_csv(io.StringIO(txt), dtype=str, engine="python", quotechar='"')
                 else:
                     df_view = pd.read_excel(chosen_path, dtype=str)
 
                 df_view = df_view.dropna(how="all")
 
-                # Eğer tüm satır tek bir kolonda "1,Ad,Mail,Telefon,Url" gibi duruyorsa,
-                # bu tek kolonu virgülden bölerek ayrı kolonlara aç
                 if df_view.shape[1] == 1:
                     first_col = df_view.columns[0]
                     sample_vals = df_view[first_col].dropna().astype(str).head(10)
-                    # Satırların çoğunda virgül varsa split etmeyi dene
                     if any("," in v for v in sample_vals):
-                        expanded = df_view[first_col].astype(str).str.split(
-                            ",", expand=True
-                        )
-                        # Kolon isimlerini basit şekilde ver
-                        expanded.columns = [
-                            f"kolon_{i+1}" for i in range(expanded.shape[1])
-                        ]
+                        expanded = df_view[first_col].astype(str).str.split(",", expand=True)
+                        expanded.columns = [f"kolon_{i+1}" for i in range(expanded.shape[1])]
                         df_view = expanded
 
-                st.caption(
-                    f"Satır: {len(df_view)} | Kolon: {len(df_view.columns)}"
-                )
+                st.caption(f"Satır: {len(df_view)} | Kolon: {len(df_view.columns)}")
                 if chosen_path.lower().endswith(".csv") and used_encoding:
                     st.caption(f"Encoding: {used_encoding}")
 
-                # Kolon seçimi
                 all_cols = df_view.columns.tolist()
-                selected_cols = st.multiselect(
-                    "Gösterilecek kolonlar",
-                    all_cols,
-                    default=all_cols,
-                )
+                selected_cols = st.multiselect("Gösterilecek kolonlar", all_cols, default=all_cols)
 
                 if selected_cols:
-                    # Geniş kolonlar için column_config ile text wrap ekle
                     column_config = {}
                     for col in selected_cols:
-                        column_config[col] = st.column_config.TextColumn(
-                            col,
-                            width="medium",
-                            help=f"{col} kolonu"
-                        )
-                    
+                        column_config[col] = st.column_config.TextColumn(col, width="medium", help=f"{col} kolonu")
+
                     st.dataframe(
                         df_view[selected_cols],
                         use_container_width=True,
