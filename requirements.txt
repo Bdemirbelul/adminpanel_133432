@@ -4,5 +4,3 @@ requests
 lxml>=6.0.2
 selenium
 webdriver-manager
-chromium
-chromium-driver

@@ -1,5 +1,7 @@
 import os
 import re
+import time
+import shutil
 from datetime import datetime
 
 import pandas as pd
@@ -9,7 +11,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 
 URL = "https://www.dialogturkiye.com/danismanlarimiz"
 
@@ -24,18 +25,13 @@ def setup_driver(headless: bool = True):
     options = Options()
     if headless:
         options.add_argument("--headless=new")
-    options.add_argument("--disable-gpu")
+
+    # GitHub Actions / Linux için kritik flag'ler
     options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1400,900")
-    
-    # GitHub Actions ortamında chromium binary path'ini ayarla
-    chrome_bin = os.environ.get("CHROME_BIN")
-    if chrome_bin:
-        options.binary_location = chrome_bin
-    elif os.path.exists("/usr/bin/chromium-browser"):
-        options.binary_location = "/usr/bin/chromium-browser"
-    elif os.path.exists("/usr/bin/chromium"):
-        options.binary_location = "/usr/bin/chromium"
+    options.add_argument("--remote-debugging-port=9222")
 
     prefs = {
         "profile.managed_default_content_settings.images": 2,
@@ -44,7 +40,23 @@ def setup_driver(headless: bool = True):
     }
     options.add_experimental_option("prefs", prefs)
 
-    return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    # 1) Workflow'dan gelen env'leri öncele
+    chrome_bin = os.environ.get("CHROME_BIN")
+    driver_bin = os.environ.get("CHROMEDRIVER_PATH")
+
+    # 2) Yoksa sistemde bul
+    if not chrome_bin:
+        chrome_bin = shutil.which("chromium-browser") or shutil.which("chromium") or shutil.which("google-chrome")
+    if not driver_bin:
+        driver_bin = shutil.which("chromedriver")
+
+    if chrome_bin:
+        options.binary_location = chrome_bin
+
+    if not driver_bin:
+        raise RuntimeError("chromedriver bulunamadı. GitHub Actions'ta apt install adımı eksik olabilir.")
+
+    return webdriver.Chrome(service=Service(driver_bin), options=options)
 
 
 def wait_cards_loaded(driver, timeout=12):
@@ -124,30 +136,26 @@ def extract_phones_from_text(text: str):
     if not text:
         return []
 
-    # phone-like chunks (keep it permissive)
     candidates = re.findall(
         r'(\+?90\s*)?\(?0?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}|\b0\d{10}\b|\b5\d{9}\b',
         text,
     )
-    # re.findall returns tuples when groups exist; normalize:
+
     flat = []
     for c in candidates:
         if isinstance(c, tuple):
             c = "".join(c)
         flat.append(c)
 
-    # also catch fully contiguous digits in the text
     digit_runs = re.findall(r"\d{10,13}", re.sub(r"\s+", "", text))
     flat.extend(digit_runs)
 
     phones = []
     for c in flat:
         d = normalize_tr_phone(c)
-        # keep only plausible TR numbers (11 digits starting with 0) or 10-digit mobile
         if len(d) == 11 and d.startswith("0"):
             phones.append(d)
 
-    # unique preserve order
     seen = set()
     out = []
     for p in phones:
@@ -166,7 +174,6 @@ def pick_best_phone_from_texts(*texts):
     for t in texts:
         all_phones.extend(extract_phones_from_text(t))
 
-    # unique preserve order
     seen = set()
     uniq = []
     for p in all_phones:
@@ -201,6 +208,7 @@ def collect_profile_links(driver):
         wait_cards_loaded(driver)
         imgs = driver.find_elements(By.CSS_SELECTOR, 'img[src*="/data/user/"]')
 
+        new_count = 0
         for img in imgs:
             try:
                 name = (img.get_attribute("alt") or "").strip()
@@ -219,11 +227,15 @@ def collect_profile_links(driver):
                             "profile_url": href,
                         }
                     )
+                    new_count += 1
             except Exception:
                 continue
 
+        print(f"[PAGE {page}] found {len(imgs)} | new {new_count} | total {len(profiles)}")
+
         if click_page_number(driver, page + 1):
             page += 1
+            time.sleep(0.8)  # sayfa geçişinde yüklenme için
             continue
         break
 
@@ -242,7 +254,6 @@ def scrape_profiles(driver, profiles):
 
         email = pick_email(driver)
 
-        # phones from text blocks
         personal_phone, work_phone = pick_best_phone_from_texts(v_top, v_a1, v_a2, v_a3)
 
         row = {
@@ -261,12 +272,14 @@ def scrape_profiles(driver, profiles):
             f'[{p["page"]}] {p["name_alt"]} | {email or "-"} | personal={personal_phone or "-"} | work={work_phone or "-"}'
         )
 
+        time.sleep(0.25)
+
     return pd.DataFrame(rows).drop_duplicates(subset=["profile_url"])
 
 
 def run(output_dir: str) -> str:
     """
-    Scraper çalışır, output_dir içine csv/json kaydeder.
+    Scraper çalışır, output_dir içine csv kaydeder.
     Geriye özet bir mesaj döndürür.
     """
     os.makedirs(output_dir, exist_ok=True)
@@ -277,10 +290,8 @@ def run(output_dir: str) -> str:
     finally:
         driver.quit()
 
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    out_path = os.path.join(output_dir, f"dialog_{date_str}.csv")
+    # Streamlit'in kolay okuması için "latest" dosyası öneririm
+    out_path = os.path.join(output_dir, "dialog_latest.csv")
     df.to_csv(out_path, index=False, encoding="utf-8-sig")
 
     return f"TOTAL: {len(df)} satır, dosya: {os.path.basename(out_path)}"
-
-

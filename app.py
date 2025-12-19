@@ -4,7 +4,9 @@ import os
 import time
 import traceback
 import builtins
+import sys
 from datetime import datetime
+from contextlib import contextmanager
 
 import pandas as pd
 
@@ -34,92 +36,220 @@ COMPANIES = [
 
 
 def log(msg: str):
-    st.session_state.logs.append(msg)
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    log_entry = f"[{timestamp}] {msg}"
+    st.session_state.logs.append(log_entry)
 
 
-def run_one(name, fn, out_dir):
-    # print'leri de log'a düşürmek için geçici olarak redirect et
+class TeeOutput:
+    """Hem terminale hem de log'a yazan output wrapper"""
+    def __init__(self, original_stream):
+        self.original_stream = original_stream
+        self.buffer = ""
+        self.log_container = None
+        
+    def set_log_container(self, container):
+        """Log container'ı set et (gerçek zamanlı güncelleme için)"""
+        self.log_container = container
+        
+    def write(self, text):
+        if not text:
+            return
+            
+        # Buffer'a ekle (çok satırlı çıktılar için)
+        self.buffer += text
+        
+        # Eğer yeni satır karakteri varsa, satırları işle
+        if '\n' in self.buffer:
+            lines = self.buffer.split('\n')
+            # Son satır hariç hepsini log'a ekle (son satır henüz tamamlanmamış olabilir)
+            for line in lines[:-1]:
+                if line.strip():  # Boş satırları atla
+                    log(line)
+            # Kalan kısmı buffer'da tut
+            self.buffer = lines[-1]
+        # Eğer buffer çok uzunsa (yeni satır olmadan), zorla log'a ekle
+        elif len(self.buffer) > 500:
+            log(self.buffer.rstrip())
+            self.buffer = ""
+        
+        # Orijinal stream'e yaz
+        try:
+            self.original_stream.write(text)
+            self.original_stream.flush()
+        except Exception:
+            pass  # Stream kapatılmış olabilir
+        
+    def flush(self):
+        # Buffer'da kalan varsa onu da log'a ekle
+        if self.buffer.strip():
+            log(self.buffer.strip())
+            self.buffer = ""
+        try:
+            self.original_stream.flush()
+        except Exception:
+            pass
+        
+    def __getattr__(self, name):
+        return getattr(self.original_stream, name)
+
+
+@contextmanager
+def capture_output(log_container=None):
+    """Tüm stdout ve stderr çıktısını yakalayan context manager"""
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
     original_print = builtins.print
-
+    
+    # Print fonksiyonunu override et
     def _print(*args, **kwargs):
+        # Her zaman log'a yaz (file parametresine bakmadan)
         msg = " ".join(str(a) for a in args)
-        log(msg)
+        if msg.strip():  # Boş mesajları atla
+            log(msg)
+        # Orijinal print'i çağır (file parametresini koruyarak)
         original_print(*args, **kwargs)
-
-    builtins.print = _print
-
-    start = time.time()
-    log(f"▶ {name} başladı...")
+    
     try:
-        result = fn(out_dir)  # scraper'ın run() fonksiyonu
-        elapsed = time.time() - start
-        log(f" {name} bitti ({elapsed:.1f}s). {result}")
-        return True
-    except Exception:
-        elapsed = time.time() - start
-        log(f" {name} hata ({elapsed:.1f}s):\n{traceback.format_exc()}")
-        return False
+        # stdout ve stderr'i yakala
+        tee_stdout = TeeOutput(original_stdout)
+        tee_stderr = TeeOutput(original_stderr)
+        if log_container is not None:
+            tee_stdout.set_log_container(log_container)
+            tee_stderr.set_log_container(log_container)
+        sys.stdout = tee_stdout
+        sys.stderr = tee_stderr
+        builtins.print = _print
+        yield
     finally:
-        # Her durumda print'i eski haline getir
+        # Her durumda eski haline getir
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
         builtins.print = original_print
+
+
+def run_one(name, fn, out_dir, log_container=None):
+    start = time.time()
+    log(f"🚀 {name} çalışmaya başladı...")
+    
+    # Log container'ı güncelle
+    if log_container is not None:
+        log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
+        log_container.code(log_text, language="", line_numbers=False)
+    
+    log(f"⏳ Lütfen bekleyin, veri çekiliyor...")
+    if log_container is not None:
+        log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
+        log_container.code(log_text, language="", line_numbers=False)
+    
+    with capture_output(log_container):
+        try:
+            result = fn(out_dir)  # scraper'ın run() fonksiyonu
+            elapsed = time.time() - start
+            
+            # İlerleme mesajları
+            if elapsed > 10:
+                log(f"⏳ Bitmeye yakın, veriler işleniyor...")
+                if log_container is not None:
+                    log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
+                    log_container.code(log_text, language="", line_numbers=False)
+            
+            log(f"✅ Veriler alındı, dosyalanıyor...")
+            if log_container is not None:
+                log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
+                log_container.code(log_text, language="", line_numbers=False)
+            
+            log(f"✓ {name} tamamlandı ({elapsed:.1f}s). {result}")
+            
+            # Log container'ı güncelle
+            if log_container is not None:
+                log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
+                log_container.code(log_text, language="", line_numbers=False)
+            
+            return True
+        except Exception:
+            elapsed = time.time() - start
+            log(f"❌ {name} hata oluştu ({elapsed:.1f}s):\n{traceback.format_exc()}")
+            
+            # Log container'ı güncelle
+            if log_container is not None:
+                log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs)
+                log_container.code(log_text, language="", line_numbers=False)
+            
+            return False
 
 
 if "logs" not in st.session_state:
     st.session_state.logs = []
+
+# Tab başlıklarını büyük yapmak için CSS ve gri butonlar için CSS
+st.markdown("""
+<style>
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        padding: 10px 20px;
+        font-size: 20px;
+        font-weight: bold;
+    }
+    /* Remax, Dialog ve Turyap butonlarını gri yap ve isimlerini kırmızı yap */
+    button[data-testid*="btn_Remax"],
+    button[data-testid*="btn_Dialog"],
+    button[data-testid*="btn_Turyap"] {
+        background-color: #808080 !important;
+        color: #ff0000 !important;
+        opacity: 0.8;
+    }
+    button[data-testid*="btn_Remax"]:hover,
+    button[data-testid*="btn_Dialog"]:hover,
+    button[data-testid*="btn_Turyap"]:hover {
+        background-color: #6a6a6a !important;
+        color: #ff0000 !important;
+        opacity: 0.9;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 tab_scraper, tab_diff, tab_view = st.tabs(
     ["Scraper Paneli", "CSV/Excel Karşılaştırma", "Çıktıları Görüntüle"]
 )
 
 with tab_scraper:
-    st.title(" Yönetici  Paneli")
-
-    colA, colB, colC = st.columns([2, 1, 1])
-
-    with colA:
-        run_date = st.text_input("Çıktı klasör etiketi (opsiyonel)", value="")
-
-    with colB:
-        headless = st.checkbox("Headless (varsa Selenium)", value=True)
-
-    with colC:
-        clear = st.button("Logları Temizle")
-
-    if clear:
-        st.session_state.logs = []
-
-    # scraper'lara opsiyon geçirmek istersen:
-    # st.session_state["headless"] = headless
-
     # Output klasörü (run bazlı)
     stamp = datetime.now().strftime("%Y-%m-%d")
-    tag = run_date.strip().replace(" ", "_")
-    run_folder = f"{stamp}_{tag}" if tag else stamp
+    run_folder = stamp
     out_dir = os.path.join(OUTPUT_BASE, run_folder)
     os.makedirs(out_dir, exist_ok=True)
-
-    st.caption(f"Çıktı klasörü: `{out_dir}`")
-
-    st.divider()
 
     left, right = st.columns([1, 1])
 
     with left:
-        st.subheader("Şirketleri Çalıştır")
-
-        if st.button("🚀 Hepsini Çalıştır", type="primary"):
-            for name, fn in COMPANIES:
-                run_one(name, fn, out_dir)
-
-        st.write("")  # spacing
+        st.subheader("Sistemi Çalıştır")
 
         for name, fn in COMPANIES:
-            if st.button(f"▶️ {name} Çalıştır"):
-                run_one(name, fn, out_dir)
+            if st.button(f"▶️ {name}", key=f"btn_{name}"):
+                # Log'ları sıfırla
+                st.session_state.logs = []
+                
+                # Sağ taraftaki log container'ı kullan
+                with right:
+                    st.subheader("Log")
+                    log_container = st.empty()
+                    log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs) if st.session_state.logs else ""
+                    log_container.code(log_text, language="", line_numbers=False)
+                
+                run_one(name, fn, out_dir, log_container)
 
     with right:
         st.subheader("Log")
-        st.text_area("Çıktı", value="\n".join(st.session_state.logs), height=520)
+        # Log container'ı oluştur
+        log_container = st.empty()
+        
+        # Log'ları göster
+        log_text = "\n".join(st.session_state.logs[-500:]) if len(st.session_state.logs) > 500 else "\n".join(st.session_state.logs) if st.session_state.logs else ""
+        log_container.code(log_text, language="", line_numbers=False)
 
     st.divider()
 
@@ -138,7 +268,15 @@ with tab_scraper:
             st.write("•", os.path.relpath(fpath, OUTPUT_BASE))
 
 with tab_diff:
-    st.title("İki Dosya Arasındaki Farkları Bul (CSV / Excel)")
+    # CSS for larger file uploader labels
+    st.markdown("""
+    <style>
+        div[data-testid="stFileUploader"] label {
+            font-size: 20px !important;
+            font-weight: bold !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
     file_a = st.file_uploader(
         "Dosya A yükle (.csv / .xlsx)", type=["csv", "xlsx"], key="a"
@@ -318,7 +456,7 @@ with tab_diff:
 
 
 with tab_view:
-    st.title("Çıktı Dosyalarını Görüntüle")
+    st.markdown("<h1 style='font-size: 32px; font-weight: bold;'>Çıktı Dosyalarını Görüntüle</h1>", unsafe_allow_html=True)
 
     # OUTPUT_BASE altındaki run klasörlerini listele
     run_dirs = [
